@@ -1,0 +1,86 @@
+function [p,T,gam]=EmpBayes(betans,Vbetans,p,tau,niter,wavespecs,MCMCspecs,fixp)
+
+% EmpBayes: Implement empirical Bayes method of Clyde and George (1998) 
+%           This version is different from the version used in
+%           wavfmm4_zhu.m, in that, we do not let T depend on ij, but let T
+%           to be T_ijk. so that tau_ijk can be computed.
+%
+%  Input: 
+%         Z -- matrix of Z-scores for theta (theta/sqrt(Vtheta))
+%         betans-- the betans estimate.
+%         p -- matrix containing starting values for pi, pi indexed by ij.
+%         tau -- vector containing starting values for tau, indexed by ijk
+%         niter -- maximum number of iterations
+%
+%  Output: shrinkaparms = {p, T}
+%
+%  Functions needed: repvec.m : same as Splus function rep applied to vectors
+%
+%%#zhu#% This code is written by assuming that \pi_{ij} depend on
+%%only i and j, not k. \tau_{ijk}.
+%#zhu#% The T here is not \tau, but the big Tau_{ijk} in section 4.4 of Morris
+%2006, see my detailed derivation. T_{ijk}=tau_{ijk}/V_{ijk}.
+Z=betans./sqrt(Vbetans);
+
+if (nargin==6)
+    fixp=0; %#zhu#% fixp=0 means we should fixed some pi_{ij} to be ones, fixp=1 does not do so.
+end
+
+if (size(p,1)==1)
+    p=repmat(p,size(Z,1),1);
+    tau=repmat(tau,size(Z,1),1);
+end
+
+k=wavespecs.Kj;
+meanop=uneqkron(k)*diag(1./k);
+    
+i=0;
+delta=100;
+minp=MCMCspecs.minp; %#zhu#% minimum of \pi_{ij}, default 10^(-14)
+%minT=MCMCspecs.minT;  %#zhu#% minimum of T, why set default=1 ?
+%bigT=MCMCspecs.bigT;  %#zhu#% value to use for tau_{ij} when vague prior desired, default=1000.
+maxO=MCMCspecs.maxO;   %#zhu#% maximum odds ratio, default 10^20.
+n_nosmooth=MCMCspecs.nj_nosmooth; %#zhu#% From 1 to n_nosmooth are the lowest frequency wavelet levels(maximum J) for which we want a vague prior, default 2.
+
+while (i<niter)&&(max(max(abs(delta)))>1e-6)
+    
+    ps=rep(p,k);  %%% Expand p and T to be 10 x K from 10 x J    
+    Ts=tau./Vbetans;
+    O=min(ps./(1-ps).*(1+Ts).^(-.5).*exp(Z.^2/2.*(Ts./(Ts+1))),maxO);
+    gam=O./(O+1);
+    
+    if (fixp==0)
+        pnew=gam*meanop;        
+    else
+        pnew=p; %#zhu#% when fixp=1, p is not ever updated.
+    end
+    Tnew=max(0,((gam.*Z.^2)*meanop)./pnew-1);
+    
+    
+    delta=[pnew-p,Tnew-T];
+    
+    p=pnew;
+    T=Tnew;
+    
+    i=i+1;
+
+end
+
+%#zhu#% add constraint after converge.
+if n_nosmooth>0
+   p(:,1:n_nosmooth)=repmat(1-minp,size(p,1),n_nosmooth); %%% Set P===1
+   p=max(min(p,1-minp),minp);
+   T(:,1:n_nosmooth)=repmat(bigT,size(T,1),n_nosmooth); %%% Set T to large number so no shrinkage to zero for these coefficients.
+end
+
+T=max(minT,T); 
+ 
+if (i<niter)
+    fprintf('\n Empirical Bayes algorithm converged at iteration %d. \n \n',i);
+else
+    fprintf('\n Empirical Bayes algorihm did not converge after %d iterations. \n \n',niter);
+end
+
+
+
+

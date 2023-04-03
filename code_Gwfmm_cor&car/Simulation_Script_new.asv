@@ -1,0 +1,104 @@
+%==========================================================================
+% Step (1): data generating
+%==========================================================================
+clear;
+wavespecs.K=256;
+K=wavespecs.K;
+p=5;
+H=2;
+m=[3,4];
+c=2;
+n=200;
+
+X=randn(n,p);
+Zall=[];
+Z=cell(H,1);
+for h=1:H
+   Z{h}=randn(n,m(h));
+   Zall=[Zall,Z{h}]; %#ok<AGROW>
+end
+
+wavespecs.wavelet='db4';
+wavespecs.nlevels=4;
+C=NaN(n,c);
+for i=1:n
+   C(i,:)=mnrnd(1,[0.4 0.6]); 
+end
+
+% Generate Theta matrix.
+Theta=max(chi2rnd(2,H+c,K),1e-3);
+
+% Generate fixed effects B.
+% Generate fixed effects B.
+alpha=rand(p,K);
+B=zeros(p,K);
+gamma=NaN(p,K);
+u=NaN(M,K);
+err=NaN(n,K);
+for j=1:K
+    gamma(:,j)=binornd(1,alpha(:,j));
+    if sum(gamma(:,j))~=0
+        B(logical(gamma(:,j)),j)=Double_Exp_rnd(0,3,sum(gamma(:,j)));  
+    end
+    u(:,j)=Double_Exp_rnd(0,3,M); 
+    err(:,j)=cauchyrnd(0,1,n,1);
+end
+
+B=randn(p,wavespecs.K);
+
+addpath('C:\Documents and Settings\hzhu1\My Documents\MATLAB\RobustWFMM\wavfmm4_zhu\Simulation');
+[model,wavespecs,True]=Data_Generate_new(X,B,Z,Zall,m,C,Theta,wavespecs);
+%save('C:\Documents and Settings\hzhu1\My Documents\MATLAB\RobustWFMM\wavfmm4_zhu\Simulation\Simu_data_new.mat','model','wavespecs','True');
+
+%==========================================================================
+% Step (2): wavefmm4_zhu.m
+%==========================================================================
+clear;
+addpath('C:\Documents and Settings\hzhu1\My Documents\MATLAB\RobustWFMM\wavfmm4_v2_zhu');
+%addpath('C:\Documents and Settings\hzhu1\My Documents\MATLAB\RobustWFMM\wavfmm4_zhu\Simulation');
+load('C:\Documents and Settings\hzhu1\My Documents\MATLAB\RobustWFMM\wavfmm4_zhu\Simulation\Simu_data_new.mat');
+MCMCspecs.B=100;
+MCMCspecs.burnin=0;
+MCMCspecs.thin=1;
+MCMCspecs.propsdTheta=1.2;
+
+MCMCspecs.nj_nosmooth=1;  % can be 0, if is 0, don't do any constraint for pi_{ij}, bigTau_{ij}.
+MCMCspecs.minp=1e-14;
+MCMCspecs.maxO=1e20;
+MCMCspecs.minVC=1e-20;
+
+MCMCspecs.VC0_thresh=1e-4;
+MCMCspecs.delta_theta=1e-4;
+MCMCspecs.thetaMLE_maxiter=1000;
+MCMCspecs.EmpBayes_maxiter=1000;
+MCMCspecs.time_update=1000;
+
+MCMCspecs.tau_prior_var=1e3; % the variance of tau_{ijk} when finding prior parameters for tau_{ijk}.
+MCMCspecs.tau_prior_idx=1; % 1 indicate that a_tau and b_tau depend on ij, 0 indicate that they depend on jk. 
+MCMCspecs.PI_prior_var=0.055; % this range should be in [0.02 0.09].
+
+tic;
+res=wavfmm4_zhu(True,model,wavespecs,MCMCspecs); 
+time=toc;
+save('C:\Documents and Settings\hzhu1\My Documents\MATLAB\RobustWFMM\wavfmm4_zhu\Simulation\SimuNew_result.mat');
+
+time/60 %#ok<NOPTS>
+mean(res.acpt_rate)
+[coverage_beta,coverage_theta]=result_analysis(True,res,model,wavespecs,0,0);
+result_analysis(True,res,model,wavespecs,1,0);
+result_analysis(True,res,model,wavespecs,0,1);
+
+%%
+p=5;
+K=wavespecs.K;
+MCMC_beta=res.MCMC_beta;
+betahat=mean(MCMC_beta);
+betaCI=quantile(MCMC_beta,[0.05,0.95]);
+beta_true=reshape(True.B',1,p*K);
+
+bhat=reshape(betahat,wavespecs.K,p)';
+b05CI=reshape(betaCI(1,:),wavespecs.K,p)';
+b95CI=reshape(betaCI(2,:),wavespecs.K,p)';
+
+id=2;
+estimate_vs_true_plot(bhat(:,id),b05CI(:,id),b95CI(:,id),True.B(:,id),'-k','.k',1);
